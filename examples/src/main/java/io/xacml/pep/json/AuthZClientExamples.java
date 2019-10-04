@@ -1,15 +1,25 @@
 package io.xacml.pep.json;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.xacml.json.model.*;
+import io.xacml.json.model.Attribute;
+import io.xacml.json.model.Category;
+import io.xacml.json.model.Request;
+import io.xacml.json.model.Response;
+import io.xacml.json.model.Result;
 import io.xacml.pep.json.client.AuthZClient;
 import io.xacml.pep.json.client.ClientConfiguration;
 import io.xacml.pep.json.client.DefaultClientConfiguration;
+import io.xacml.pep.json.client.feign.FeignAuthZClient;
 import io.xacml.pep.json.client.jaxrs.JaxRsAuthZClient;
 import lombok.extern.slf4j.Slf4j;
 import org.glassfish.jersey.client.authentication.HttpAuthenticationFeature;
 
-import javax.ws.rs.client.*;
+import javax.ws.rs.client.Client;
+import javax.ws.rs.client.ClientBuilder;
+import javax.ws.rs.client.Entity;
+import javax.ws.rs.client.Invocation;
+import javax.ws.rs.client.WebTarget;
 
 /**
  * This class contains sample code using JAX-RS to invoke a Policy Decision Point.
@@ -22,67 +32,88 @@ import javax.ws.rs.client.*;
 @Slf4j
 public class AuthZClientExamples {
 
-    public static void main(String[] args) {
+  public static void main(String[] args) {
 
-        ObjectMapper mapper = new ObjectMapper();
-        ClientConfiguration clientConfiguration = DefaultClientConfiguration.builder()
-                .pdpUrl("https://djob-hp:9443/asm-pdp/authorize")
-                .username("pdp-user")
-                .password("password")
-                .build();
+    String url=args[0];
+    String username=args[1];
+    String password=args[2];
 
-        Category subject = new Category();
-        subject.addAttribute(new Attribute("username", "Alice"));
-        subject.addAttribute(new Attribute("age", 15));
+    ObjectMapper mapper = new ObjectMapper();
+    mapper.configure(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY, true);
+    ClientConfiguration clientConfiguration = DefaultClientConfiguration.builder()
+        .pdpUrl(url)
+        .username(username)
+        .password(password)
+        .build();
 
-        Request xacmlRequest = new Request();
-        xacmlRequest.addAccessSubjectCategory(subject);
+    callPDPWithJaxRsClient(clientConfiguration, mapper, createRequest());
+    callPDPWithFeignClient(clientConfiguration, mapper, createRequest());
 
-        callPDPWithFeignClient(clientConfiguration, mapper, xacmlRequest);
-        callPDPWithJaxRsClient(clientConfiguration, mapper, xacmlRequest);
-        callPDPWithJaxRsClient2();
+    // Enable, if needed, basic authentication
+    HttpAuthenticationFeature feature = HttpAuthenticationFeature.basic(username, password);
+    Client client = ClientBuilder.newClient();
+    client.register(feature);
+    WebTarget webTarget = client.target(url);
+
+    callPDPWithJaxRsClient2(webTarget,createRequest());
+  }
+
+  private static void callPDPWithFeignClient(ClientConfiguration clientConfiguration, ObjectMapper mapper, Request request) {
+    AuthZClient authZClient = new FeignAuthZClient(clientConfiguration, mapper);
+    Response xacmlResponse = authZClient.makeAuthorizationRequest(request);
+    for (Result r : xacmlResponse.getResults()) {
+      log.debug("Decision: {}", r.getDecision());
     }
+  }
 
-    private static void callPDPWithFeignClient(ClientConfiguration clientConfiguration, ObjectMapper mapper, Request request) {
-        AuthZClient authZClient = new JaxRsAuthZClient(clientConfiguration, mapper);
-        Response xacmlResponse = authZClient.makeAuthorizationRequest(request);
-        for (Result r : xacmlResponse.getResults()) {
-            log.debug("Decision: {}", r.getDecision());
-        }
+  private static void callPDPWithJaxRsClient(ClientConfiguration clientConfiguration, ObjectMapper mapper, Request request) {
+    AuthZClient authZClient = new JaxRsAuthZClient(clientConfiguration, mapper);
+    Response xacmlResponse = authZClient.makeAuthorizationRequest(request);
+    for (Result r : xacmlResponse.getResults()) {
+      log.debug("Decision: {}", r.getDecision());
     }
+  }
 
-    private static void callPDPWithJaxRsClient(ClientConfiguration clientConfiguration, ObjectMapper mapper, Request request) {
-        AuthZClient authZClient = new JaxRsAuthZClient(clientConfiguration, mapper);
-        Response xacmlResponse = authZClient.makeAuthorizationRequest(request);
-        for (Result r : xacmlResponse.getResults()) {
-            log.debug("Decision: {}", r.getDecision());
-        }
+  /**
+   * Show the full build of a JaxRs client and use to get a PDP response
+   */
+  private static void callPDPWithJaxRsClient2(WebTarget webTarget,Request request) {
+
+    Invocation.Builder builder = webTarget.request("application/xacml+json");
+
+
+    javax.ws.rs.core.Response response = builder.post(Entity.entity(request, "application/xacml+json"));
+    Response xacmlResponse = response.readEntity(io.xacml.json.model.Response.class);
+    for (Result r : xacmlResponse.getResults()) {
+      log.debug("Decision: {}", r.getDecision());
     }
+  }
 
-    /**
-     * Show the full build of a JaxRs client and use to get a PDP response
-     */
-    private static void callPDPWithJaxRsClient2() {
-        // Enable, if needed, basic authentication
-        HttpAuthenticationFeature feature = HttpAuthenticationFeature.basic("ads-user", "secret");
-        Client client = ClientBuilder.newClient();
-        client.register(feature);
-        WebTarget webTarget = client.target("http://djob-hp:8080/asm-pdp/authorize");
-        Invocation.Builder builder = webTarget.request("application/xacml+json");
 
-        // Start building the XACML request.
-        Request xacmlRequest = new Request();
+  private static Request createRequest() {
+    // Start building the XACML request.
+    Request xacmlRequest = new Request();
 
-        // Create user attributes
-        Category subject = new Category();
-        subject.addAttribute(new Attribute("username", "Alice"));
+    // Create iub attribute
+    Category subject = new Category();
+    subject.addAttribute(new Attribute("Attributes.access_subject.iub", "123"));
+    // Create role attribute
+    subject.addAttribute(new Attribute("Attributes.access_subject.role", "user"));
 
-        // Add user attributes to the request.
-        xacmlRequest.addAccessSubjectCategory(subject);
-        javax.ws.rs.core.Response response = builder.post(Entity.entity(xacmlRequest, "application/xacml+json"));
-        Response xacmlResponse = response.readEntity(io.xacml.json.model.Response.class);
-        for (Result r : xacmlResponse.getResults()) {
-            log.debug("Decision: {}", r.getDecision());
-        }
-    }
+    // Add user attributes to the request.
+    xacmlRequest.addAccessSubjectCategory(subject);
+
+    Category resource = new Category();
+    resource.addAttribute(new Attribute("bnc.object.objectId", "sbie"));
+    xacmlRequest.addResourceCategory(resource);
+
+    Category action = new Category();
+    action.addAttribute(new Attribute("bnc.action.actionId", "access"));
+    xacmlRequest.addActionCategory(action);
+
+
+    xacmlRequest.setReturnPolicyIdList(true);
+    return xacmlRequest;
+
+  }
 }

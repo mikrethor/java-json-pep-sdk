@@ -1,5 +1,8 @@
 package io.xacml.pep.json.client.jaxrs;
 
+import static io.xacml.pep.json.client.PDPConstants.AUTHORIZATION_ENDPOINT;
+import static io.xacml.pep.json.client.PDPConstants.CONTENT_TYPE;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,18 +18,22 @@ import org.glassfish.jersey.client.authentication.HttpAuthenticationFeature;
 import org.glassfish.jersey.logging.LoggingFeature;
 import org.glassfish.jersey.logging.LoggingFeature.Verbosity;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
+import java.util.Objects;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.client.Entity;
 import javax.ws.rs.client.Invocation;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.Objects;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
-import static io.xacml.pep.json.client.PDPConstants.AUTHORIZATION_ENDPOINT;
-import static io.xacml.pep.json.client.PDPConstants.CONTENT_TYPE;
 
 /**
  * Builds a JAX-RS to invoke a Policy Decision Point.
@@ -38,90 +45,118 @@ import static io.xacml.pep.json.client.PDPConstants.CONTENT_TYPE;
  */
 public class JaxRsAuthZClient implements AuthZClient {
 
-    private static Logger logger = Logger.getLogger(JaxRsAuthZClient.class.getName());
+  private static Logger logger = Logger.getLogger(JaxRsAuthZClient.class.getName());
 
-    private final Invocation.Builder requestInvocationBuilder;
+  private final Invocation.Builder requestInvocationBuilder;
 
-    private final ObjectMapper mapper;
+  private final ObjectMapper mapper;
 
-    public JaxRsAuthZClient(Invocation.Builder requestInvocationBuilder, ObjectMapper mapper) {
-        this.requestInvocationBuilder = requestInvocationBuilder;
-        this.mapper = mapper;
-    }
+  public JaxRsAuthZClient(Invocation.Builder requestInvocationBuilder, ObjectMapper mapper) {
+    this.requestInvocationBuilder = requestInvocationBuilder;
+    this.mapper = mapper;
+  }
 
-    public JaxRsAuthZClient(ClientConfiguration clientConfiguration, ObjectMapper mapper) {
+  public JaxRsAuthZClient(ClientConfiguration clientConfiguration, ObjectMapper mapper) {
 
-        Objects.requireNonNull(clientConfiguration, "Client configuration must be non-null");
-        Objects.requireNonNull(clientConfiguration, "Client configuration must contain a non-null PDP URL");
+    Objects.requireNonNull(clientConfiguration, "Client configuration must be non-null");
+    Objects.requireNonNull(clientConfiguration, "Client configuration must contain a non-null PDP URL");
 
-        this.mapper = mapper;
-        Client client = ClientBuilder.newClient();
-        client.register(new LoggingFeature(logger, Level.WARNING, Verbosity.PAYLOAD_ANY, null));
+    this.mapper = mapper;
 
-        // Username (and Password) should be provided if PDP requires Basic Authentication
-        if (null != clientConfiguration.getUsername()) {
-            client.register(HttpAuthenticationFeature.basic(
-                    clientConfiguration.getUsername(),
-                    clientConfiguration.getPassword())
-            );
-        }
-        this.requestInvocationBuilder = client
-                .target(clientConfiguration.getPdpUrl() + AUTHORIZATION_ENDPOINT)
-                .request(CONTENT_TYPE);
-    }
 
-    /**
-     * Sends the request object to the PDP and returns the response from PDP
-     * <p>
-     * Response object will be in the format of JSON Profile of XACML 1.1 (where the response is always an array -
-     * to simplify things).
-     * <p>
-     * Implementations are free to support the JSON Profile of XACML 1.0 (where the response could be either an
-     * Object or an Array), which is modeled with {@link SingleResponse}. However, they should map
-     * the {@link SingleResponse} to a {@link Response} to simplify PEP response parsing
-     *
-     * @param request the XACML request object
-     * @return the response object
-     */
-    @Override
-    public Response makeAuthorizationRequest(Request request) {
-        javax.ws.rs.core.Response response = requestInvocationBuilder.post(Entity.entity(request, CONTENT_TYPE));
+    SSLContext sslcontext = null;
+    try {
 
-        JsonNode jsonNode = null;
-        try {
-            jsonNode = mapper.readTree((InputStream) response.getEntity());
-        } catch (IOException e) {
-            throw new ResponseParsingException("Could not read the response as a JSON node", e);
+      sslcontext = SSLContext.getInstance("TLS");
+
+      sslcontext.init(null, new TrustManager[] {new X509TrustManager() {
+        public void checkClientTrusted(X509Certificate[] arg0, String arg1) throws CertificateException {
         }
 
-        return mapJsonToResponse(jsonNode);
-    }
-
-    /**
-     * Uses the jsonNode to return a Response object.
-     * <p>
-     * if the jsonNode is a {@link SingleResponse}, it will create a {@link Response} from it
-     *
-     * @param jsonNode the jsonNode extracted from the client
-     * @return the response
-     */
-    private Response mapJsonToResponse(JsonNode jsonNode) {
-
-        Response xacmlResponse;
-        if (jsonNode.get("Response") instanceof ArrayNode) {
-            try {
-                xacmlResponse = mapper.treeToValue(jsonNode, Response.class);
-            } catch (JsonProcessingException e) {
-                throw new ResponseParsingException("Could not map JSON node to Response", e);
-            }
-        } else {
-            try {
-                Result singleResult = mapper.treeToValue(jsonNode, SingleResponse.class).getResult();
-                xacmlResponse = mapSingleResultToResponse(singleResult);
-            } catch (JsonProcessingException e) {
-                throw new ResponseParsingException("Could not map JSON node to Single Response", e);
-            }
+        public void checkServerTrusted(X509Certificate[] arg0, String arg1) throws CertificateException {
         }
-        return xacmlResponse;
+
+        public X509Certificate[] getAcceptedIssuers() {
+          return new X509Certificate[0];
+        }
+      }}, new java.security.SecureRandom());
+
+
+//            HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
+    } catch (NoSuchAlgorithmException | KeyManagementException e) {
+      e.printStackTrace();
     }
+
+    Client client = ClientBuilder.newBuilder().sslContext(sslcontext)
+        .hostnameVerifier((s1, s2) -> true).build();
+    client.register(new LoggingFeature(logger, Level.WARNING, Verbosity.PAYLOAD_ANY, null));
+
+
+    // Username (and Password) should be provided if PDP requires Basic Authentication
+    if (null != clientConfiguration.getUsername()) {
+      client.register(HttpAuthenticationFeature.basic(
+          clientConfiguration.getUsername(),
+          clientConfiguration.getPassword())
+      );
+
+    }
+    this.requestInvocationBuilder = client
+        .target(clientConfiguration.getPdpUrl() + AUTHORIZATION_ENDPOINT)
+        .request(CONTENT_TYPE);
+  }
+
+  /**
+   * Sends the request object to the PDP and returns the response from PDP
+   * <p>
+   * Response object will be in the format of JSON Profile of XACML 1.1 (where the response is always an array -
+   * to simplify things).
+   * <p>
+   * Implementations are free to support the JSON Profile of XACML 1.0 (where the response could be either an
+   * Object or an Array), which is modeled with {@link SingleResponse}. However, they should map
+   * the {@link SingleResponse} to a {@link Response} to simplify PEP response parsing
+   *
+   * @param request the XACML request object
+   * @return the response object
+   */
+  @Override
+  public Response makeAuthorizationRequest(Request request) {
+    javax.ws.rs.core.Response response = requestInvocationBuilder.post(Entity.entity(request, CONTENT_TYPE));
+
+    JsonNode jsonNode = null;
+    try {
+      jsonNode = mapper.readTree((InputStream) response.getEntity());
+    } catch (IOException e) {
+      throw new ResponseParsingException("Could not read the response as a JSON node", e);
+    }
+
+    return mapJsonToResponse(jsonNode);
+  }
+
+  /**
+   * Uses the jsonNode to return a Response object.
+   * <p>
+   * if the jsonNode is a {@link SingleResponse}, it will create a {@link Response} from it
+   *
+   * @param jsonNode the jsonNode extracted from the client
+   * @return the response
+   */
+  private Response mapJsonToResponse(JsonNode jsonNode) {
+
+    Response xacmlResponse;
+    if (jsonNode.get("Response") instanceof ArrayNode) {
+      try {
+        xacmlResponse = mapper.treeToValue(jsonNode, Response.class);
+      } catch (JsonProcessingException e) {
+        throw new ResponseParsingException("Could not map JSON node to Response", e);
+      }
+    } else {
+      try {
+        Result singleResult = mapper.treeToValue(jsonNode, SingleResponse.class).getResult();
+        xacmlResponse = mapSingleResultToResponse(singleResult);
+      } catch (JsonProcessingException e) {
+        throw new ResponseParsingException("Could not map JSON node to Single Response", e);
+      }
+    }
+    return xacmlResponse;
+  }
 }
