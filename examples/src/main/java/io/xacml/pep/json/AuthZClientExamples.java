@@ -10,6 +10,7 @@ import io.xacml.json.model.Result;
 import io.xacml.pep.json.client.AuthZClient;
 import io.xacml.pep.json.client.ClientConfiguration;
 import io.xacml.pep.json.client.DefaultClientConfiguration;
+import io.xacml.pep.json.client.DefaultContextConfiguration;
 import io.xacml.pep.json.client.feign.FeignAuthZClient;
 import io.xacml.pep.json.client.jaxrs.JaxRsAuthZClient;
 import lombok.extern.slf4j.Slf4j;
@@ -34,9 +35,9 @@ public class AuthZClientExamples {
 
   public static void main(String[] args) {
 
-    String url=args[0];
-    String username=args[1];
-    String password=args[2];
+    String url = args[0];
+    String username = args[1];
+    String password = args[2];
 
     ObjectMapper mapper = new ObjectMapper();
     mapper.configure(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY, true);
@@ -51,11 +52,15 @@ public class AuthZClientExamples {
 
     // Enable, if needed, basic authentication
     HttpAuthenticationFeature feature = HttpAuthenticationFeature.basic(username, password);
-    Client client = ClientBuilder.newClient();
+
+    Client client = ClientBuilder.newBuilder()
+        .hostnameVerifier(DefaultContextConfiguration.getHostnameVerifier())
+        .sslContext(DefaultContextConfiguration.getContext())
+        .build();
     client.register(feature);
     WebTarget webTarget = client.target(url);
 
-    callPDPWithJaxRsClient2(webTarget,createRequest());
+    callPDPWithJaxRsClient2(webTarget, createRequest());
   }
 
   private static void callPDPWithFeignClient(ClientConfiguration clientConfiguration, ObjectMapper mapper, Request request) {
@@ -77,10 +82,9 @@ public class AuthZClientExamples {
   /**
    * Show the full build of a JaxRs client and use to get a PDP response
    */
-  private static void callPDPWithJaxRsClient2(WebTarget webTarget,Request request) {
+  private static void callPDPWithJaxRsClient2(WebTarget webTarget, Request request) {
 
     Invocation.Builder builder = webTarget.request("application/xacml+json");
-
 
     javax.ws.rs.core.Response response = builder.post(Entity.entity(request, "application/xacml+json"));
     Response xacmlResponse = response.readEntity(io.xacml.json.model.Response.class);

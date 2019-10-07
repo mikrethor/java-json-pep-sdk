@@ -13,6 +13,7 @@ import io.xacml.json.model.Result;
 import io.xacml.json.model.SingleResponse;
 import io.xacml.pep.json.client.AuthZClient;
 import io.xacml.pep.json.client.ClientConfiguration;
+import io.xacml.pep.json.client.DefaultContextConfiguration;
 import io.xacml.pep.json.client.ResponseParsingException;
 import org.glassfish.jersey.client.authentication.HttpAuthenticationFeature;
 import org.glassfish.jersey.logging.LoggingFeature;
@@ -64,30 +65,9 @@ public class JaxRsAuthZClient implements AuthZClient {
     this.mapper = mapper;
 
 
-    SSLContext sslcontext = null;
-    try {
-
-      sslcontext = SSLContext.getInstance("TLS");
-
-      sslcontext.init(null, new TrustManager[] {new X509TrustManager() {
-        public void checkClientTrusted(X509Certificate[] arg0, String arg1) throws CertificateException {
-        }
-
-        public void checkServerTrusted(X509Certificate[] arg0, String arg1) throws CertificateException {
-        }
-
-        public X509Certificate[] getAcceptedIssuers() {
-          return new X509Certificate[0];
-        }
-      }}, new java.security.SecureRandom());
 
 
-//            HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
-    } catch (NoSuchAlgorithmException | KeyManagementException e) {
-      e.printStackTrace();
-    }
-
-    Client client = ClientBuilder.newBuilder().sslContext(sslcontext)
+    Client client = ClientBuilder.newBuilder().sslContext(DefaultContextConfiguration.getContext())
         .hostnameVerifier((s1, s2) -> true).build();
     client.register(new LoggingFeature(logger, Level.WARNING, Verbosity.PAYLOAD_ANY, null));
 
